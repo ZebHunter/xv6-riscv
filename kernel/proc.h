@@ -104,4 +104,7 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  struct proc* next;           // Link to next process in list
+  struct proc* prev;           // Link to previous process in list
 };

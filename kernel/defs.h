@@ -102,10 +102,13 @@ void            sleep(void*, struct spinlock*);
 void            userinit(void);
 int             wait(uint64);
 void            wakeup(void*);
+void            wakeup1(void*);
 void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+int             dump(void);
+int             dump2(int, int, uint64*);
 
 // swtch.S
 void            swtch(struct context*, struct context*);
@@ -187,3 +190,21 @@ void            virtio_disk_intr(void);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
+
+// buddy.c
+void           bd_init(void*,void*);
+void           bd_free(void*);
+void           *bd_malloc(uint64);
+
+struct list {
+  struct list *next;
+  struct list *prev;
+};
+
+// list.c
+void lst_init(struct list*);
+void lst_remove(struct list*);
+void lst_push(struct list*, void *);
+void *lst_pop(struct list*);
+void lst_print(struct list*);
+int lst_empty(struct list*);

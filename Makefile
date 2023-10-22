@@ -28,11 +28,13 @@ OBJS = \
   $K/sysfile.o \
   $K/kernelvec.o \
   $K/plic.o \
-  $K/virtio_disk.o
+  $K/virtio_disk.o \
+  $K/buddy.o \
+  $K/list.o
 
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin
-#TOOLPREFIX = 
+TOOLPREFIX = ~/src/osi/sc-dt/riscv-gcc/bin/riscv64-unknown-elf-
 
 # Try to infer the correct TOOLPREFIX if not set
 ifndef TOOLPREFIX
@@ -106,6 +108,20 @@ $U/_forktest: $U/forktest.o $(ULIB)
 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $U/_forktest $U/forktest.o $U/ulib.o $U/usys.o
 	$(OBJDUMP) -S $U/_forktest > $U/forktest.asm
 
+$U/dumptests1.o : $U/dumptests.S
+	$(CC) $(CFLAGS) -c -o $U/dumptests1.o $U/dumptests.S
+
+$U/_dumptests: $U/dumptests.o $U/dumptests1.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $U/_dumptests $U/dumptests.o $U/dumptests1.o $(ULIB)
+	$(OBJDUMP) -S $U/_dumptests > $U/dumptests.asm
+
+$U/dump2tests1.o : $U/dump2tests.S
+	$(CC) $(CFLAGS) -c -o $U/dump2tests1.o $U/dump2tests.S
+
+$U/_dump2tests: $U/dump2tests.o $U/dump2tests1.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $U/_dump2tests $U/dump2tests.o $U/dump2tests1.o $(ULIB)
+	$(OBJDUMP) -S $U/_dump2tests > $U/dump2tests.asm
+
 mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 	gcc -Werror -Wall -I. -o mkfs/mkfs mkfs/mkfs.c
 
@@ -132,6 +148,11 @@ UPROGS=\
 	$U/_grind\
 	$U/_wc\
 	$U/_zombie\
+	$U/_pingpong\
+	$U/_example\
+	$U/_dumptests\
+	$U/_dump2tests\
+	$U/_alloctest\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
