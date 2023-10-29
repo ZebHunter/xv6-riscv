@@ -51,7 +51,7 @@ void
 procinit(void)
 {
   initlock(&pid_lock, "nextpid");
-  initlock(&wait_lock, "wait_lock");
+  //initlock(&wait_lock, "wait_lock");
   initlock(&list_lock, "list_lock");
   /*for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
@@ -444,11 +444,11 @@ wait(uint64 addr)
     }
 
     // No point waiting if we don't have any children.
-    if(!havekids || killed(p)){
+    if(!havekids || p->killed/*killed(p)*/){
       release(&list_lock);
       return -1;
     }
-    
+
     // Wait for a child to exit.
     sleep(p, &list_lock);  //DOC: wait-sleep
   }
