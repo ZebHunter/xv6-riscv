@@ -5,7 +5,7 @@
 #include "kernel/stat.h"
 #include "user/user.h"
 
-#define N  1000
+#define N  10000
 
 void
 print(const char *s)
@@ -29,10 +29,10 @@ forktest(void)
       exit(0);
   }
 
-  /*if(n == N){
+  if(n == N){
     print("fork claimed to work N times!\n");
     exit(1);
-  }*/
+  }
 
   for(; n > 0; n--){
     if(wait(0) < 0){

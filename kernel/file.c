@@ -30,8 +30,11 @@ struct file*
 filealloc(void)
 {
   struct file *f = bd_malloc(sizeof(struct file));
-  f->ref = 1;
-  return f;
+  if(f){
+    f->ref = 1;
+    return f;
+  }
+  return 0;
 
   /*acquire(&ftable.lock);
   for(f = ftable.file; f < ftable.file + NFILE; f++){
@@ -76,7 +79,7 @@ fileclose(struct file *f)
   f->type = FD_NONE;
   release(&ftable.lock);
   */
-  bd_free(f);
+  
   if(ff.type == FD_PIPE){
     pipeclose(ff.pipe, ff.writable);
   } else if(ff.type == FD_INODE || ff.type == FD_DEVICE){
@@ -84,6 +87,7 @@ fileclose(struct file *f)
     iput(ff.ip);
     end_op();
   }
+  bd_free(f);
 }
 
 // Get metadata about file f.
