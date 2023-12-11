@@ -46,7 +46,7 @@ kvmmake(void)
   kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 
   // allocate and map a kernel stack for each process.
-  proc_mapstacks(kpgtbl);
+  //proc_mapstacks(kpgtbl);
   
   return kpgtbl;
 }
@@ -102,6 +102,16 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
     }
   }
   return &pagetable[PX(0, va)];
+}
+
+int 
+valid_virtual_addr(struct proc* p, uint64 va){
+  if (p->sz < va) return -1;
+  
+  if(va > MAXVA) return -1;
+
+  
+  return 0;
 }
 
 // Look up a virtual address, return the physical address,
@@ -179,10 +189,10 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     panic("uvmunmap: not aligned");
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
-    if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
-    if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+    if((pte = walk(pagetable, a, 0)) == 0) continue;
+      //panic("uvmunmap: walk");
+    if((*pte & PTE_V) == 0) continue;
+      //panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -331,9 +341,9 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       //kfree(mem);
       goto err;
     }
-    //acquire_ref();
+    acquire_ref_lock();
     inc_ref((void *) pa);
-    //release_ref();
+    release_ref_lock();
   }
   return 0;
 
@@ -342,14 +352,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   return -1;
 }
 
-int 
-valid_virtual_addr(struct proc* p, uint64 va){
-  if (p->sz <= va) return -1;
-  
-  if(va >= MAXVA) return -1;
-  
-  return 0;
-}
 
 int is_cow(pagetable_t pagetable, uint64 va){
   if(valid_virtual_addr(myproc(), va) != 0) return -1;
@@ -365,40 +367,6 @@ int is_cow(pagetable_t pagetable, uint64 va){
   return 0;
 }
 
-int
-uvmcopy_cow(pagetable_t pagetable, uint64 va){
-
-  if(valid_virtual_addr(myproc(), va) != 0) return -1;
-
-  pte_t *pte;
-  uint64 pa;
-  uint flags;
-  char *mem;
-  
-  if(((pte = walk(pagetable, va, 0)) != 0) && ((*pte & PTE_V) != 0) && ((*pte & PTE_RSW) == 0)) return -2;
-  
-  if((mem = kalloc()) == 0)
-    return -1;
-  
-  pa = PTE2PA(*pte);
-  if((pa % PGSIZE != 0) && (pa >= PHYSTOP)){
-    kfree(mem);
-    return -1;
-  }
-  flags = (PTE_FLAGS(*pte) & ~PTE_RSW) | PTE_W;
-  memmove(mem, (char*)pa, PGSIZE);
-  uvmunmap(pagetable, va, 1, 0);
-  kfree((void*)pa);
-
-  if(mappages(pagetable, va, PGSIZE, (uint64)mem, flags) != 0){
-    kfree(mem);
-    return -1;
-  }
-
-  return 0;
-
-}
-
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
 void
@@ -412,6 +380,8 @@ uvmclear(pagetable_t pagetable, uint64 va)
   *pte &= ~PTE_U;
 }
 
+
+
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
@@ -422,16 +392,31 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    if(is_cow(pagetable, va0) == 0) {
-      if(uvmcopy_cow(pagetable, va0) == -1) return -1;
-    }
     pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
+    
+    if(!pa0 && (((va0 < MAXVA) && (va0 < myproc()->sz)) == 0)) return -1;
+
+    pte_t *pte = walk(pagetable, va0, 0);
+
+    if ((va0 < myproc()->sz) && (*pte & PTE_V) && (*pte & PTE_U) && (*pte & PTE_RSW) && !(PTE_W & *pte)) {
+    
+        void* mem = kalloc();
+        
+        if (mem == 0) {
+            printf("copyout: failed to allocate copy-on-write page\n");
+        }
+        else {
+            memmove(mem, (char*)pa0, PGSIZE);
+            uint flags = ((PTE_FLAGS(*pte) & ~PTE_RSW) | PTE_W);
+            uvmunmap(pagetable, va0, 1, 1);
+           *pte = PA2PTE(mem) | flags;
+            pa0 = (uint64)mem;
+        }
+    }
+
     n = PGSIZE - (dstva - va0);
-    if(n > len)
-      n = len;
-    memmove((void *)(pa0 + (dstva - va0)), src, n);
+    if(n > len) n = len;
+    if (pa0 != 0) memmove((void *)(pa0 + (dstva - va0)), src, n);
 
     len -= n;
     src += n;
@@ -450,15 +435,12 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(srcva);
-    //if(va0 >= MAXVA) return -1;
-    //if(uvmcopy_cow(pagetable, va0) == -1) return -1;
     pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
+    if(!pa0 && (((va0 < MAXVA) && (va0 < myproc()->sz)) == 0)) return -1; //srcva?
     n = PGSIZE - (srcva - va0);
     if(n > len)
       n = len;
-    memmove(dst, (void *)(pa0 + (srcva - va0)), n);
+    if(pa0 != 0) memmove(dst, (void *)(pa0 + (srcva - va0)), n);
 
     len -= n;
     dst += n;

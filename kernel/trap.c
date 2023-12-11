@@ -29,6 +29,34 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+int
+uvmcopy_cow(pagetable_t pagetable, uint64 va){
+
+  const int OK = 0, ERR = -1, NOT_COW = 1;
+
+  va = PGROUNDDOWN(va);
+  if(va >= MAXVA) return ERR;
+
+  pte_t *pte = walk(pagetable, va, 0);
+  
+  //check that all is not equal to 0
+  if ((pte && (*pte & PTE_V) && (*pte & PTE_U)) == 0) return ERR;
+  
+  if ((*pte & PTE_RSW) == 0) return NOT_COW;
+
+  char *mem = kalloc();
+  if (mem != 0) {
+    uint64 pa = PTE2PA(*pte);
+    memmove(mem, (char*)pa, PGSIZE);
+    uint flags = ((PTE_FLAGS(*pte) & ~PTE_RSW) | PTE_W);
+    *pte = PA2PTE(mem) | flags;
+    kfree((void*)pa);
+    return OK;
+  }
+  return ERR;
+
+}
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -41,47 +69,83 @@ usertrap(void)
   if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
 
-  // send interrupts and exceptions to kerneltrap(),
-  // since we're now in the kernel.
   w_stvec((uint64)kernelvec);
 
   struct proc *p = myproc();
-  
-  // save user program counter.
   p->trapframe->epc = r_sepc();
-  
+
   if(r_scause() == 8){
-    // system call
 
-    if(killed(p))
+    if(p->killed)
       exit(-1);
-
-    // sepc points to the ecall instruction,
-    // but we want to return to the next instruction.
+      
     p->trapframe->epc += 4;
-
-    // an interrupt will change sepc, scause, and sstatus,
-    // so enable only now that we're done with those registers.
+    
     intr_on();
 
     syscall();
-  } else if(r_scause() == 13 || r_scause() == 15){
-      uint64 va = PGROUNDDOWN(r_stval());
-      if(is_cow(p->pagetable, va) != 0 || uvmcopy_cow(p->pagetable, va) < 0){
-        printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-        printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-        setkilled(p);
-      }
-  } else if((which_dev = devintr()) != 0){
+  }
+  else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  }
+  else if (r_scause() == 13 || r_scause() == 15) {
+
+    uint64 va = r_stval();
+
+
+    if (p->sz <= va) { 
+      //printf("usertrap: va is bigger than process size\n");
+      p->killed = 1;
+      goto killcheck;
+    }
+
+
+    
+    va = PGROUNDDOWN(va);
+
+    pte_t* pte = walk(p->pagetable, va, 0);
+    
+
+    if ((pte && (*pte & PTE_V)) == 0) {
+    
+    	void* mem = kalloc();
+    	if(!mem) p->killed = 1;
+    	else{
+    		memset(mem, 0, PGSIZE);
+ 		    int flags = PTE_W | PTE_R | PTE_U;
+ 		    if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, flags) != 0){
+ 			    kfree(mem);
+ 			    p->killed = 1;
+ 		    }
+    	}
+    } 
+     
+    
+    else {
+
+      //if found and copy-on-write page
+      
+      if (*pte & PTE_RSW) {
+      
+       //cow didn't return 0 --> fail	
+        if (uvmcopy_cow(p->pagetable, va)) {
+          printf("usertrap: cow copy failed\n");
+          p->killed = 1;
+        }
+      }
+    }
+    
+    //ok
+  }
+  else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    setkilled(p);
+    p->killed = 1;
   }
 
-  if(killed(p))
-    exit(-1);
+  killcheck: if(p->killed) {
+ 	  exit(-1);
+  }
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)
